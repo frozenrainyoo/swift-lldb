@@ -22,6 +22,14 @@
 
 #include "llvm/ADT/DenseSet.h"
 
+#include <mutex>
+
+#if defined(LLDB_CONFIGURATION_DEBUG)
+#define ASSERT_MODULE_LOCK(expr) (expr->AssertModuleLock())
+#else
+#define ASSERT_MODULE_LOCK(expr) ((void)0)
+#endif
+
 namespace lldb_private {
 
 class SymbolFile : public PluginInterface {
@@ -96,6 +104,12 @@ public:
   virtual uint32_t CalculateAbilities() = 0;
 
   //------------------------------------------------------------------
+  /// Symbols file subclasses should override this to return the Module that
+  /// owns the TypeSystem that this symbol file modifies type information in.
+  //------------------------------------------------------------------
+  virtual std::recursive_mutex &GetModuleMutex() const;
+
+  //------------------------------------------------------------------
   /// Initialize the SymbolFile object.
   ///
   /// The SymbolFile object with the best set of abilities (detected
@@ -131,6 +145,23 @@ public:
   virtual size_t ParseTypes(const SymbolContext &sc) = 0;
   virtual size_t ParseVariablesForContext(const SymbolContext &sc) = 0;
   virtual Type *ResolveTypeUID(lldb::user_id_t type_uid) = 0;
+
+
+  /// The characteristics of an array type.
+  struct ArrayInfo {
+    int64_t first_index;
+    llvm::SmallVector<uint64_t, 1> element_orders;
+    uint32_t byte_stride;
+    uint32_t bit_stride;
+  };
+  /// If \c type_uid points to an array type, return its characteristics.
+  /// To support variable-length array types, this function takes an
+  /// optional \p ExtecutionContext. If \c exe_ctx is non-null, the
+  /// dynamic characteristics for that context are returned.
+  virtual llvm::Optional<ArrayInfo>
+  GetDynamicArrayInfoForUID(lldb::user_id_t type_uid,
+                            const lldb_private::ExecutionContext *exe_ctx) = 0;
+
   virtual bool CompleteType(CompilerType &compiler_type) = 0;
   virtual void ParseDeclsForContext(CompilerDeclContext decl_ctx) {}
   virtual CompilerDecl GetDeclForUID(lldb::user_id_t uid) {
@@ -273,6 +304,8 @@ protected:
     uint32_t first_line;
     uint32_t last_line;
   };
+
+  void AssertModuleLock();
 
   ObjectFile *m_obj_file; // The object file that symbols can be extracted from.
   uint32_t m_abilities;
